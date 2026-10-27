@@ -119,6 +119,25 @@ service cloud.firestore {
           && request.resource.data.data is string && request.resource.data.data.size() <= 400000;
         allow delete: if isHost(pageId);
       }
+
+      // Ephemeral per-tab heartbeats power the live connected-user count.
+      match /presence/{sessionId} {
+        allow read: if signedIn() && (isActive(pageId) || isHost(pageId));
+        allow create: if signedIn() && isActive(pageId)
+          && request.resource.data.keys().hasOnly(['uid', 'seenAt', 'expiresAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.seenAt == request.time
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt <= request.time + duration.value(2, 'm');
+        allow update: if signedIn() && resource.data.uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['uid', 'seenAt', 'expiresAt'])
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.seenAt == request.time
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt <= request.time + duration.value(2, 'm');
+        allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      }
     }
   }
 }

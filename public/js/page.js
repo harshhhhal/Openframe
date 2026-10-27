@@ -1,5 +1,5 @@
 import { auth, db, storage } from '/js/firebase.js';
-import { doc, onSnapshot, collection, query, orderBy, addDoc, updateDoc, deleteDoc, getDocs, serverTimestamp, Timestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { doc, onSnapshot, collection, query, orderBy, addDoc, setDoc, updateDoc, deleteDoc, getDocs, serverTimestamp, Timestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { ref as sref, getBytes, deleteObject } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 import { uploadFileWithFallback, resolveChunkedFile, downloadOrResolveFile, deleteChunkedFile } from '/js/storage.js';
 import { shell, $, esc, ico, paint, toast, modal, confirmDialog, copyText, fmtTime, fmtSize, fmtLeft, qrPng } from '/js/ui.js';
@@ -48,7 +48,7 @@ export async function cleanup(id) {
 export function openPage(id) {
   const uid = auth.currentUser.uid, pref = doc(db, 'pages', id), shareUrl = `${location.origin}/p/${id}`;
   const unsubs = [], urls = new Map(), pending = new Map(), cleanups = [];
-  let page = null, items = [], comments = [], built = false, dead = false, timer, isHost = false, itemsLoaded = false;
+  let page = null, items = [], comments = [], built = false, dead = false, timer, presenceTimer, isHost = false, itemsLoaded = false;
   let openReply = null, replyDraft = '', lastSend = 0;
   const Y = { player: null, vid: null, rev: -1, hostRev: 0, cur: null, applying: false, wt: null, ready: false, lastT: 0, tick: 0, mounting: null };
   const onOff = () => toast(navigator.onLine ? 'Back online' : 'You are offline. Changes will sync when you reconnect.', !navigator.onLine);
@@ -56,7 +56,7 @@ export function openPage(id) {
 
   const stop = () => {
     if (dead) return; dead = true;
-    unsubs.forEach((u) => u()); cleanups.forEach((f) => f()); clearInterval(timer); clearTimeout(Y.wt);
+    unsubs.forEach((u) => u()); cleanups.forEach((f) => f()); clearInterval(timer); clearInterval(presenceTimer); clearTimeout(Y.wt);
     try { Y.player?.destroy(); } catch { /* ignore */ }
     urls.forEach((u) => URL.revokeObjectURL(u)); removeEventListener('online', onOff); removeEventListener('offline', onOff);
   };
@@ -77,26 +77,31 @@ export function openPage(id) {
 
   /* ---------- layout ---------- */
   function build() {
-    const meta = `<button class="badge copyb" id="copy" aria-label="Copy link">${ico('copy')}<span>Copy link</span></button><span class="badge" title="Time left"><i class="dot"></i><b id="hleft">--</b></span>`;
+    const meta = `<button class="badge copyb" id="copy" aria-label="Copy link">${ico('copy')}<span>Copy link</span></button><span class="badge" title="People viewing"><i class="dot"></i><b id="husers">1</b><span>online</span></span><span class="badge" title="Time left">${ico('clock-3')}<b id="hleft">--</b></span>`;
     shell(`<div class="tabs" role="tablist"><button class="tab on" data-tab="main" role="tab">Page</button><button class="tab" data-tab="info" role="tab">${isHost ? 'Share &amp; manage' : 'Share'}</button></div>
     <div class="workspace" data-tab="main"><div class="col main">
-      <section class="block" id="ytsec" ${isHost ? '' : 'hidden'}><div class="block-h"><h2>Watch along</h2></div>
-        <div class="yt" id="ytwrap" hidden><div id="ytp"></div>${isHost ? '' : '<div class="shield"></div>'}<div class="ytnote" id="ytnote" hidden></div></div>
-        <div class="ytbar" id="ytbar">${isHost
-          ? `<form id="ytf"><input type="url" id="yti" aria-label="YouTube link" placeholder="Paste a YouTube link" required><button class="btn dark" type="submit">Set video</button></form><button class="btn danger" id="ytrm" hidden>Remove</button>`
-          : `<button class="btn sm" id="mute" aria-label="Mute">${ico('volume-2')}</button><input type="range" id="vol" min="0" max="100" value="100" aria-label="Volume">`}
-          <span id="ytst"></span></div></section>
-      <section class="block"><div class="block-h"><h2>Shared<span class="count" id="ic" hidden></span></h2></div>
-        ${isHost ? `<form class="composer" id="composer"><button type="button" class="icon-btn" id="attach" aria-label="Add files">${ico('paperclip')}</button><input type="file" id="fi" multiple hidden><div class="cin"><textarea id="ct" rows="1" maxlength="10000" placeholder="Text or link" aria-label="Text or link"></textarea></div><button class="btn dark" id="send" type="submit"><span>Send</span>${ico('arrow-up')}</button></form>` : ''}
-        <div class="tray" id="tray"></div><div id="feed"><div class="skel"></div></div></section>
+      <section class="block share-panel">
+        <header class="share-head"><div><span class="label">Openframe page</span><h1>Share space</h1><p>Links, notes and files — all in one place.</p></div><div class="share-state"><i class="dot"></i><span id="presenceCopy">1 connected</span></div></header>
+        <section class="watch-card" id="ytsec" ${isHost ? '' : 'hidden'}>
+          <div class="watch-label"><span>${ico('play-circle')} Watch along</span><span id="ytst"></span></div>
+          <div class="yt" id="ytwrap" hidden><div id="ytp"></div>${isHost ? '' : '<div class="shield"></div>'}<div class="ytnote" id="ytnote" hidden></div></div>
+          <div class="ytbar" id="ytbar">${isHost
+            ? `<form id="ytf"><input type="url" id="yti" aria-label="YouTube link" placeholder="Paste a YouTube link" required><button class="btn dark" type="submit">Set video</button></form><button class="btn danger" id="ytrm" hidden>Remove</button>`
+            : `<button class="btn sm" id="mute" aria-label="Mute">${ico('volume-2')}</button><input type="range" id="vol" min="0" max="100" value="100" aria-label="Volume">`}
+          </div>
+        </section>
+        <div class="shared-area"><div class="stream-head"><div><h2>Shared items<span class="count" id="ic" hidden></span></h2><p>Everything shared on this page appears here.</p></div><span class="stream-mark">${ico('sparkles')}</span></div><div id="feed"><div class="skel"></div></div></div>
+        <div class="tray" id="tray"></div>
+        ${isHost ? `<form class="composer" id="composer"><button type="button" class="icon-btn" id="attach" aria-label="Add files">${ico('paperclip')}</button><input type="file" id="fi" multiple hidden><div class="cin"><textarea id="ct" rows="1" maxlength="10000" placeholder="Write a note or paste a link…" aria-label="Text or link"></textarea></div><button class="btn dark" id="send" type="submit"><span>Share</span>${ico('arrow-up')}</button></form>` : ''}
+      </section>
       <section class="block"><div class="block-h"><h2>Comments<span class="count" id="cc" hidden></span></h2><button class="btn sm" id="addc">${ico('plus')}Add a comment</button></div>
         <form id="cform" hidden>${commentFields('c')}<div class="row" style="margin-top:12px"><button class="btn dark sm" type="submit">${ico('send')}Post</button></div></form>
         <div id="comments"></div></section></div>
-      <aside class="col side"><section class="block">
-        <div class="side-sec"><span class="label">Share link</span><div class="linkbox">${esc(shareUrl)}</div><button class="btn dark block" id="copy2">${ico('copy')}Copy link</button></div>
-        <div class="side-sec"><span class="label">${ico('qr-code')} QR code</span><div class="qrpanel" id="qrbox"></div><button class="btn block" id="qrbig">Enlarge or download</button></div>
-        <div class="side-sec stats"><div><span class="label">Expires in</span><strong id="left">--</strong></div><div><span class="label">Items</span><strong id="sc">0</strong></div></div>
-        ${isHost ? `<div class="side-sec"><span class="label">Host</span><button class="btn block" id="ext">${ico('clock')}Extend 1 hour</button><button class="btn danger block" id="del">${ico('trash-2')}Delete page</button><p class="note">Host access is tied to this browser. Clearing site data or switching devices loses it.</p></div>` : ''}
+      <aside class="col side"><section class="block share-card">
+        <div class="side-sec link-sec"><span class="label">Share this page</span><h2>Bring people in</h2><div class="linkbox">${esc(shareUrl)}</div><button class="btn dark block" id="copy2">${ico('copy')}Copy link</button></div>
+        <div class="side-sec qr-sec"><div class="qr-title"><span class="label">${ico('qr-code')} QR code</span><button class="btn ghost sm" id="qrbig">Open</button></div><div class="qrpanel" id="qrbox"></div></div>
+        <div class="side-sec stats"><div><span class="label">Connected</span><strong id="users">1</strong></div><div><span class="label">Expires in</span><strong id="left">--</strong></div><div><span class="label">Shared</span><strong id="sc">0</strong></div></div>
+        ${isHost ? `<div class="side-sec host-sec"><span class="label">Page controls</span><button class="btn block" id="ext">${ico('clock')}Extend 1 hour</button><button class="btn danger block" id="del">${ico('trash-2')}Delete page</button><p class="note">Host access stays in this browser.</p></div>` : ''}
       </section></aside></div>${isHost ? `<div class="dropov" id="dov" hidden><div>Drop files to share</div></div>` : ''}`, { meta, room: true });
 
     $('#copy').onclick = $('#copy2').onclick = () => copyText(shareUrl);
@@ -136,6 +141,8 @@ export function openPage(id) {
     $('#comments').addEventListener('submit', (e) => { e.preventDefault(); sendComment(e.target, e.target.dataset.parent); });
     $('#comments').addEventListener('input', (e) => { if (e.target.matches('.rf textarea')) replyDraft = e.target.value; });
 
+    setupPresence();
+
     timer = setInterval(() => { tickBar(); ytLoop(); }, 1000);
     const onErr = () => { if (!dead) failFor(); };
     unsubs.push(onSnapshot(query(collection(pref, 'items'), orderBy('createdAt', 'asc')), (s) => {
@@ -151,6 +158,28 @@ export function openPage(id) {
     const left = page.expiresAt.toMillis() - Date.now();
     if (left <= 0) return fail('This page has expired');
     const t = fmtLeft(left); const a = $('#left'), h = $('#hleft'); if (a) a.textContent = t; if (h) h.textContent = t;
+  }
+
+  // Firestore does not offer an onDisconnect hook, so presence is a short-lived heartbeat.
+  // A closed or offline tab naturally disappears within one minute.
+  function setupPresence() {
+    const session = crypto.randomUUID(), here = doc(pref, 'presence', session), ttl = 55_000;
+    const beat = () => setDoc(here, {
+      uid, seenAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + ttl),
+    }, { merge: true }).catch(() => {});
+    const showCount = (count) => {
+      const n = Math.max(1, count), text = `${n} connected`;
+      const a = $('#users'), b = $('#husers'), c = $('#presenceCopy');
+      if (a) a.textContent = n; if (b) b.textContent = n; if (c) c.textContent = text;
+    };
+    beat(); presenceTimer = setInterval(beat, 20_000);
+    unsubs.push(onSnapshot(collection(pref, 'presence'), (snap) => {
+      const now = Date.now();
+      showCount(snap.docs.filter((entry) => entry.data().expiresAt?.toMillis?.() > now).length);
+    }));
+    const leave = () => deleteDoc(here).catch(() => {});
+    addEventListener('pagehide', leave, { once: true });
+    cleanups.push(() => { removeEventListener('pagehide', leave); leave(); });
   }
 
   async function extend() {
