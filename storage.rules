@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /pages/{pageId}/{fileId} {
+      function page() { return firestore.get(/databases/(default)/documents/pages/$(pageId)).data; }
+      function active() { return page().status == 'active' && page().expiresAt > request.time; }
+      function isHost() { return request.auth != null && page().hostUid == request.auth.uid; }
+
+      allow read: if request.auth != null && (active() || isHost());
+      allow create: if isHost() && active()
+        && request.resource.size <= 25 * 1024 * 1024
+        && !(request.resource.contentType.matches('text/html.*|application/xhtml.*|image/svg.*|text/javascript.*|application/javascript.*|application/x-msdownload|application/x-sh|application/x-executable.*'));
+      allow delete: if isHost();
+    }
+  }
+}

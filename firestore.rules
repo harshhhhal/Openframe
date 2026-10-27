@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function pageData(id) { return get(/databases/$(database)/documents/pages/$(id)).data; }
+    function isHost(id) { return signedIn() && pageData(id).hostUid == request.auth.uid; }
+    function isActive(id) { return pageData(id).status == 'active' && pageData(id).expiresAt > request.time; }
+
+    match /pages/{pageId} {
+      // Public read only while active; host can always read (needed for cleanup retries).
+      allow read: if signedIn() && (resource == null
+        || (resource.data.status == 'active' && resource.data.expiresAt > request.time)
+        || resource.data.hostUid == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['hostUid','createdAt','expiresAt','status','schemaVersion','title','youtubeState'])
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.status == 'active'
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.expiresAt > request.time + duration.value(1, 'm')
+        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(1, 'h');
+
+      allow update: if signedIn()
+        && resource.data.hostUid == request.auth.uid
+        && resource.data.status == 'active' && resource.data.expiresAt > request.time
+        && request.resource.data.hostUid == resource.data.hostUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.status in ['active', 'deleted']
+        && request.resource.data.expiresAt >= resource.data.expiresAt
+        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(1, 'h');
+
+      allow delete: if signedIn() && resource.data.hostUid == request.auth.uid;
+
+      match /items/{itemId} {
+        allow read: if signedIn() && (isActive(pageId) || isHost(pageId));
+        allow create: if isHost(pageId) && isActive(pageId)
+          && request.resource.data.type in ['text','link','file','image','video']
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && (!('text' in request.resource.data) || request.resource.data.text.size() <= 10000)
+          && (!('url' in request.resource.data) || request.resource.data.url.size() <= 2000);
+        allow update: if isHost(pageId) && isActive(pageId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text'])
+          && request.resource.data.text.size() <= 10000;
+        allow delete: if isHost(pageId);
+      }
+
+      match /comments/{commentId} {
+        allow read: if signedIn() && (isActive(pageId) || isHost(pageId));
+        allow create: if signedIn() && isActive(pageId)
+          && request.resource.data.keys().hasOnly(['displayName','body','parentCommentId','anonymousAuthorId','createdAt'])
+          && request.resource.data.anonymousAuthorId == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.displayName is string
+          && request.resource.data.displayName.size() >= 1 && request.resource.data.displayName.size() <= 40
+          && request.resource.data.body is string
+          && request.resource.data.body.size() >= 1 && request.resource.data.body.size() <= 1000
+          && (request.resource.data.parentCommentId == null
+              || (request.resource.data.parentCommentId is string
+                  && exists(/databases/$(database)/documents/pages/$(pageId)/comments/$(request.resource.data.parentCommentId))
+                  && get(/databases/$(database)/documents/pages/$(pageId)/comments/$(request.resource.data.parentCommentId)).data.parentCommentId == null));
+        allow delete: if signedIn() && (isHost(pageId) || resource.data.anonymousAuthorId == request.auth.uid);
+      }
+    }
+  }
+}
