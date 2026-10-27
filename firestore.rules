@@ -108,6 +108,17 @@ service cloud.firestore {
                   && get(/databases/$(database)/documents/pages/$(pageId)/comments/$(request.resource.data.parentCommentId)).data.parentCommentId == null));
         allow delete: if signedIn() && (isHost(pageId) || resource.data.anonymousAuthorId == request.auth.uid);
       }
+
+      // Used only when Cloud Storage is unavailable. A 250 KB binary slice becomes
+      // roughly 333 KB of Base64 text, safely below Firestore's document limit.
+      match /files/{fileId}/chunks/{chunkId} {
+        allow read: if signedIn() && (isActive(pageId) || isHost(pageId));
+        allow create: if isHost(pageId) && isActive(pageId)
+          && request.resource.data.keys().hasOnly(['index', 'data'])
+          && request.resource.data.index is int && request.resource.data.index >= 0
+          && request.resource.data.data is string && request.resource.data.data.size() <= 400000;
+        allow delete: if isHost(pageId);
+      }
     }
   }
 }

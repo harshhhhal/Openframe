@@ -1,6 +1,7 @@
 import { auth, db, storage } from '/js/firebase.js';
 import { doc, onSnapshot, collection, query, orderBy, addDoc, updateDoc, deleteDoc, getDocs, serverTimestamp, Timestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-import { ref as sref, uploadBytesResumable, getBytes, deleteObject } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+import { ref as sref, getBytes, deleteObject } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
+import { uploadFileWithFallback, resolveChunkedFile, downloadOrResolveFile, deleteChunkedFile } from '/js/storage.js';
 import { shell, $, esc, ico, paint, toast, modal, confirmDialog, copyText, fmtTime, fmtSize, fmtLeft, qrPng } from '/js/ui.js';
 import { unavailable } from '/js/main.js';
 
@@ -33,8 +34,9 @@ export async function cleanup(id) {
   try {
     const its = await getDocs(collection(pref, 'items'));
     await Promise.all(its.docs.map(async (d) => {
-      const p = d.data().storagePath;
+      const data = d.data(), p = data.storagePath;
       if (p) await deleteObject(sref(storage, p)).catch((e) => { if (e.code !== 'storage/object-not-found') throw e; });
+      if (data.isChunked) await deleteChunkedFile(data.fileURL, pref);
     }));
     await Promise.all(its.docs.map((d) => deleteDoc(d.ref)));
     const cs = await getDocs(collection(pref, 'comments'));
@@ -173,9 +175,13 @@ export function openPage(id) {
   /* ---------- shared items ---------- */
   const blobFor = (it) => {
     if (urls.has(it.id)) return Promise.resolve(urls.get(it.id));
-    if (!pending.has(it.id)) pending.set(it.id, getBytes(sref(storage, it.storagePath), MAX_FILE).then((b) => {
-      const u = URL.createObjectURL(new Blob([b], { type: it.contentType })); urls.set(it.id, u); return u;
-    }).finally(() => pending.delete(it.id)));
+    if (!pending.has(it.id)) pending.set(it.id, (async () => {
+      if (it.fileURL?.startsWith('data:') || it.fileURL?.startsWith('https://')) return it.fileURL;
+      const blob = it.isChunked
+        ? await resolveChunkedFile(it.fileURL, it.contentType, pref)
+        : new Blob([await getBytes(sref(storage, it.storagePath), MAX_FILE)], { type: it.contentType });
+      const u = URL.createObjectURL(blob); urls.set(it.id, u); return u;
+    })().finally(() => pending.delete(it.id)));
     return pending.get(it.id);
   };
 
@@ -217,13 +223,16 @@ export function openPage(id) {
     else if (a === 'dl') {
       b.disabled = true;
       try {
-        const bytes = await getBytes(sref(storage, it.storagePath), MAX_FILE);
-        const u = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
-        const l = document.createElement('a'); l.href = u; l.download = it.originalName; document.body.append(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000);
+        if (it.fileURL) await downloadOrResolveFile(it.fileURL, it.originalName, it.contentType, { parentRef: pref });
+        else {
+          const bytes = await getBytes(sref(storage, it.storagePath), MAX_FILE);
+          const u = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+          const l = document.createElement('a'); l.href = u; l.download = it.originalName; document.body.append(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000);
+        }
       } catch { toast('Download failed. Try again.', true); }
       b.disabled = false;
     } else if (a === 'del' && await confirmDialog('Delete this entry?')) {
-      try { if (it.storagePath) await deleteObject(sref(storage, it.storagePath)).catch((er) => { if (er.code !== 'storage/object-not-found') throw er; }); await deleteDoc(doc(pref, 'items', it.id)); toast('Entry deleted'); }
+      try { if (it.storagePath) await deleteObject(sref(storage, it.storagePath)).catch((er) => { if (er.code !== 'storage/object-not-found') throw er; }); if (it.isChunked) await deleteChunkedFile(it.fileURL, pref); await deleteDoc(doc(pref, 'items', it.id)); toast('Entry deleted'); }
       catch { toast('Could not delete the entry.', true); }
     } else if (a === 'edit') {
       const m = modal(`<h2>Edit text</h2><label class="f" for="et" style="margin-top:0">Text</label><textarea id="et" maxlength="10000"></textarea><p class="err" hidden></p><div class="row end"><button class="btn" data-x>Cancel</button><button class="btn primary" data-s>Save</button></div>`);
@@ -247,11 +256,10 @@ export function openPage(id) {
     const row = document.createElement('div'); row.className = 'up'; row.innerHTML = `<div></div><div class="prog"><i></i></div>`;
     row.firstChild.textContent = `Uploading ${f.name} (${fmtSize(f.size)})`; $('#tray')?.append(row);
     try {
-      await new Promise((res, rej) => { const t = uploadBytesResumable(sref(storage, path), f, { contentType: ct });
-        t.on('state_changed', (s) => { row.querySelector('i').style.width = (s.bytesTransferred / s.totalBytes * 100) + '%'; }, rej, res); });
+      const stored = await uploadFileWithFallback({ file: f, parentRef: pref, storagePath: path, contentType: ct, onProgress: (percent) => { row.querySelector('i').style.width = percent + '%'; } });
       const type = IMG.test(ct) ? 'image' : VID.test(ct) ? 'video' : 'file';
-      try { await addDoc(collection(pref, 'items'), { type, storagePath: path, originalName: f.name.slice(0, 200), contentType: ct, size: f.size, createdAt: serverTimestamp(), createdBy: uid }); }
-      catch (er) { await deleteObject(sref(storage, path)).catch(() => {}); throw er; }
+      try { await addDoc(collection(pref, 'items'), { type, ...stored, originalName: f.name.slice(0, 200), contentType: ct, size: f.size, createdAt: serverTimestamp(), createdBy: uid }); }
+      catch (er) { if (stored.storagePath) await deleteObject(sref(storage, stored.storagePath)).catch(() => {}); if (stored.isChunked) await deleteChunkedFile(stored.fileURL, pref).catch(() => {}); throw er; }
     } catch (er) { console.error(er); toast(`Upload failed for ${f.name}.`, true); }
     row.remove();
   }
