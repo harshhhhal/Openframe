@@ -4,7 +4,7 @@ import { doc, getDoc, setDoc, serverTimestamp, Timestamp } from 'https://www.gst
 import { shell, $, esc, ico, paint, modal } from '/js/ui.js';
 import { openPage } from '/js/page.js';
 
-const ID_RE = /^[A-Za-z0-9_-]{22}$/;
+const ID_RE = /^[A-Za-z0-9]{6}$/;
 const DURATIONS = [['30 min', 30], ['1 hour', 60], ['6 hours', 360], ['24 hours', 1440], ['7 days', 10080]];
 const state = { teardown: null };
 
@@ -20,8 +20,9 @@ export function unavailable(title) {
 }
 
 function newId() {
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
 function landing() {
@@ -95,7 +96,7 @@ function about() {
 function route() {
   state.teardown?.(); state.teardown = null;
   const p = location.pathname.replace(/\/$/, '') || '/';
-  const m = p.match(/^\/p\/([A-Za-z0-9_-]{22})$/);
+  const m = p.match(/^\/p\/([A-Za-z0-9]{6})$/);
   if (p === '/') landing(); else if (p === '/about') about();
   else if (m) state.teardown = openPage(m[1]);
   else unavailable('This page is no longer available');

@@ -81,7 +81,7 @@ export function openPage(id) {
     shell(`<div class="tabs" role="tablist"><button class="tab on" data-tab="main" role="tab">Page</button><button class="tab" data-tab="info" role="tab">${isHost ? 'Share &amp; manage' : 'Share'}</button></div>
     <div class="workspace" data-tab="main"><div class="col main">
       <section class="block share-panel">
-        <header class="share-head"><div><span class="label">Openframe page</span><h1>Share space</h1><p>Links, notes and files — all in one place.</p></div><div class="share-state"><i class="dot"></i><span id="presenceCopy">1 connected</span></div></header>
+        <header class="share-head"><div><span class="label">Openframe page</span><h1>Shared</h1><p>Notes, links and files in one place.</p></div><div class="share-state"><i class="dot"></i><span id="presenceCopy">1 connected</span></div></header>
         <section class="watch-card" id="ytsec" ${isHost ? '' : 'hidden'}>
           <div class="watch-label"><span>${ico('play-circle')} Watch along</span><span id="ytst"></span></div>
           <div class="yt" id="ytwrap" hidden><div id="ytp"></div>${isHost ? '' : '<div class="shield"></div>'}<div class="ytnote" id="ytnote" hidden></div></div>
@@ -98,7 +98,7 @@ export function openPage(id) {
         <form id="cform" hidden>${commentFields('c')}<div class="row" style="margin-top:12px"><button class="btn dark sm" type="submit">${ico('send')}Post</button></div></form>
         <div id="comments"></div></section></div>
       <aside class="col side"><section class="block share-card">
-        <div class="side-sec link-sec"><span class="label">Share this page</span><h2>Bring people in</h2><div class="linkbox">${esc(shareUrl)}</div><button class="btn dark block" id="copy2">${ico('copy')}Copy link</button></div>
+        <div class="side-sec link-sec"><span class="label">Share this page</span><h2>Invite people</h2><div class="linkbox">${esc(shareUrl)}</div><button class="btn dark block" id="copy2">${ico('copy')}Copy link</button></div>
         <div class="side-sec qr-sec"><div class="qr-title"><span class="label">${ico('qr-code')} QR code</span><button class="btn ghost sm" id="qrbig">Open</button></div><div class="qrpanel" id="qrbox"></div></div>
         <div class="side-sec stats"><div><span class="label">Connected</span><strong id="users">1</strong></div><div><span class="label">Expires in</span><strong id="left">--</strong></div><div><span class="label">Shared</span><strong id="sc">0</strong></div></div>
         ${isHost ? `<div class="side-sec host-sec"><span class="label">Page controls</span><button class="btn block" id="ext">${ico('clock')}Extend 1 hour</button><button class="btn danger block" id="del">${ico('trash-2')}Delete page</button><p class="note">Host access stays in this browser.</p></div>` : ''}
@@ -275,21 +275,28 @@ export function openPage(id) {
   }
 
   let upChain = Promise.resolve();
-  const uploadFiles = (files) => files.forEach((f) => { upChain = upChain.then(() => uploadOne(f)); });
-  async function uploadOne(f) {
+  const uploadFiles = (files) => files.forEach((f) => {
+    const controller = new AbortController();
+    upChain = upChain.then(() => uploadOne(f, controller));
+  });
+  async function uploadOne(f, controller) {
     if (dead) return;
     if (f.size === 0) return toast(`${f.name} is empty.`, true);
     if (f.size > MAX_FILE) return toast(`${f.name} is over the 25 MB limit.`, true);
     if (BLOCKED.test(f.name)) return toast(`${f.name} is a file type that cannot be shared.`, true);
     const ct = f.type || 'application/octet-stream', path = `pages/${id}/${crypto.randomUUID()}`;
-    const row = document.createElement('div'); row.className = 'up'; row.innerHTML = `<div></div><div class="prog"><i></i></div>`;
-    row.firstChild.textContent = `Uploading ${f.name} (${fmtSize(f.size)})`; $('#tray')?.append(row);
+    const row = document.createElement('div'); row.className = 'up'; row.innerHTML = `<div class="up-top"><span></span><button type="button" class="btn ghost sm">Cancel</button></div><div class="prog"><i></i></div>`;
+    row.querySelector('span').textContent = `Uploading ${f.name} (${fmtSize(f.size)})`;
+    row.querySelector('button').onclick = () => controller.abort(); $('#tray')?.append(row);
     try {
-      const stored = await uploadFileWithFallback({ file: f, parentRef: pref, storagePath: path, contentType: ct, onProgress: (percent) => { row.querySelector('i').style.width = percent + '%'; } });
+      const stored = await uploadFileWithFallback({ file: f, parentRef: pref, storagePath: path, contentType: ct, signal: controller.signal, onProgress: (percent) => { row.querySelector('i').style.width = percent + '%'; } });
       const type = IMG.test(ct) ? 'image' : VID.test(ct) ? 'video' : 'file';
       try { await addDoc(collection(pref, 'items'), { type, ...stored, originalName: f.name.slice(0, 200), contentType: ct, size: f.size, createdAt: serverTimestamp(), createdBy: uid }); }
       catch (er) { if (stored.storagePath) await deleteObject(sref(storage, stored.storagePath)).catch(() => {}); if (stored.isChunked) await deleteChunkedFile(stored.fileURL, pref).catch(() => {}); throw er; }
-    } catch (er) { console.error(er); toast(`Upload failed for ${f.name}.`, true); }
+    } catch (er) {
+      if (er?.name === 'AbortError' || controller.signal.aborted) toast(`Canceled ${f.name}.`);
+      else { console.error(er); toast(`Upload failed for ${f.name}.`, true); }
+    }
     row.remove();
   }
 
