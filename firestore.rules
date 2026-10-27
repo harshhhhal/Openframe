@@ -5,7 +5,53 @@ service cloud.firestore {
     function pageData(id) { return get(/databases/$(database)/documents/pages/$(id)).data; }
     function isHost(id) { return signedIn() && pageData(id).hostUid == request.auth.uid; }
     function isActive(id) { return pageData(id).status == 'active' && pageData(id).expiresAt > request.time; }
+    function roomExists(roomId) { return exists(/databases/$(database)/documents/rooms/$(roomId)); }
+    function roomIsActive(roomId) {
+      return roomExists(roomId)
+        && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'active';
+    }
 
+    // Existing LoopFlow data. Kept unchanged while Openframe uses /pages below.
+    match /rooms/{roomId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'roomId', 'createdAt', 'expiresAt', 'activeUsers', 'devices',
+          'ownerDeviceId', 'status', 'lifetimeMinutes', 'ownerId'
+        ])
+        && request.resource.data.roomId == roomId
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.lifetimeMinutes in [10, 30, 60, 120]
+        && request.resource.data.activeUsers == 1
+        && request.resource.data.status == 'active'
+        && request.resource.data.devices is list
+        && request.resource.data.devices.size() == 1
+        && request.resource.data.devices[0] == request.resource.data.ownerDeviceId;
+
+      allow read: if signedIn();
+
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['devices', 'activeUsers', 'status'])
+        && (
+          (request.resource.data.status == 'active'
+            && request.resource.data.devices is list
+            && request.resource.data.devices.size() <= 2
+            && request.resource.data.activeUsers == request.resource.data.devices.size())
+          || (request.resource.data.status == 'deleted'
+            && request.resource.data.activeUsers == 0)
+        );
+
+      allow delete: if signedIn();
+    }
+
+    match /rooms/{roomId}/{document=**} {
+      allow read, write: if signedIn() && roomIsActive(roomId);
+    }
+
+    // Openframe data.
     match /pages/{pageId} {
       // Public read only while active; host can always read (needed for cleanup retries).
       allow read: if signedIn() && (resource == null
