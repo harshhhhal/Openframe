@@ -4,7 +4,7 @@ export const firebaseConfig = {
   apiKey: 'AIzaSyB3j9PABcO18cBWVKyfq7sAxS4N5mSRjTQ',
   authDomain: 'openframe-harshal.firebaseapp.com',
   projectId: 'openframe-harshal',
-  storageBucket: 'YOUR_PROJECT.appspot.com',
+  storageBucket: 'openframe-harshal.firebasestorage.app',
   messagingSenderId: '11819750263',
   appId: '1:118197502635:web:e96523229d59582d536dee',
 };
