@@ -50,6 +50,7 @@ export function openPage(id) {
   const unsubs = [], urls = new Map(), pending = new Map(), cleanups = [];
   let page = null, items = [], comments = [], built = false, dead = false, timer, presenceTimer, isHost = false, itemsLoaded = false;
   let openReply = null, replyDraft = '', lastSend = 0;
+  let currentTab = 'all';
   const Y = { player: null, vid: null, rev: -1, hostRev: 0, cur: null, applying: false, wt: null, ready: false, lastT: 0, tick: 0, mounting: null };
   const onOff = () => toast(navigator.onLine ? 'Back online' : 'You are offline. Changes will sync when you reconnect.', !navigator.onLine);
   addEventListener('online', onOff); addEventListener('offline', onOff);
@@ -63,7 +64,18 @@ export function openPage(id) {
   const fail = (title) => { const host = page?.hostUid === uid; stop(); unavailable(title); if (host) cleanup(id); };
   const failFor = () => fail(page?.status === 'active' && page.expiresAt.toMillis() <= Date.now() ? 'This page has expired' : 'This page is no longer available');
 
-  shell('<div class="workspace"><div class="col"><div class="skel"></div><div class="skel"></div></div></div>', { room: true });
+  shell(`<main class="share-layout">
+    <section class="workspace">
+      <div class="workspace-header-skel"><div class="skel" style="height:36px;width:180px;"></div></div>
+      <div class="skel" style="height:80px;margin-bottom:16px;"></div>
+      <div class="skel" style="height:260px;"></div>
+    </section>
+    <aside class="sidebar">
+      <div class="skel" style="height:170px;margin-bottom:16px;"></div>
+      <div class="skel" style="height:130px;margin-bottom:16px;"></div>
+      <div class="skel" style="height:240px;"></div>
+    </aside>
+  </main>`, { room: true });
 
   unsubs.push(onSnapshot(pref, (s) => {
     if (dead) return;
@@ -77,36 +89,259 @@ export function openPage(id) {
 
   /* ---------- layout ---------- */
   function build() {
-    const meta = `<button class="badge copyb" id="copy" aria-label="Copy link">${ico('copy')}<span>Copy link</span></button><span class="badge" title="People viewing"><i class="dot"></i><b id="husers">1</b><span>online</span></span><span class="badge" title="Time left">${ico('clock-3')}<b id="hleft">--</b></span>`;
-    shell(`<div class="tabs" role="tablist"><button class="tab on" data-tab="main" role="tab">Page</button><button class="tab" data-tab="info" role="tab">${isHost ? 'Share &amp; manage' : 'Share'}</button></div>
-    <div class="workspace" data-tab="main"><div class="col main">
-      <section class="block share-panel">
-        <header class="share-head"><div><span class="label">Openframe page</span><h1>Shared</h1><p>Notes, links and files in one place.</p></div><div class="share-state"><i class="dot"></i><span id="presenceCopy">1 connected</span></div></header>
-        <section class="watch-card" id="ytsec" ${isHost ? '' : 'hidden'}>
-          <div class="watch-label"><span>${ico('play-circle')} Watch along</span><span id="ytst"></span></div>
-          <div class="yt" id="ytwrap" hidden><div id="ytp"></div>${isHost ? '' : '<div class="shield"></div>'}<div class="ytnote" id="ytnote" hidden></div></div>
-          <div class="ytbar" id="ytbar">${isHost
-            ? `<form id="ytf"><input type="url" id="yti" aria-label="YouTube link" placeholder="Paste a YouTube link" required><button class="btn dark" type="submit">Set video</button></form><button class="btn danger" id="ytrm" hidden>Remove</button>`
-            : `<button class="btn sm" id="mute" aria-label="Mute">${ico('volume-2')}</button><input type="range" id="vol" min="0" max="100" value="100" aria-label="Volume">`}
+    const meta = `<span class="badge status-pill" title="Connected viewers"><i class="dot"></i><b id="husers">1</b><span>online</span></span><span class="badge expiry-pill" title="Time remaining">${ico('clock-3')}<b id="hleft">--</b></span>`;
+    
+    shell(`<main class="share-layout">
+      <!-- Main Workspace (Left Column) -->
+      <section class="workspace" aria-label="Main collaboration workspace">
+        <!-- Workspace Header -->
+        <header class="workspace-header">
+          <div class="workspace-heading">
+            <h1>Shared</h1>
+            <span class="connection-count" title="Active participants">
+              <i class="dot"></i>
+              <span id="presenceCopy">1 connected</span>
+            </span>
+          </div>
+          <div class="workspace-actions">
+            ${isHost ? `<span class="role-pill host-role">${ico('shield-check')}<span>Host</span></span>` : `<span class="role-pill viewer-role">${ico('eye')}<span>Viewer</span></span>`}
+          </div>
+        </header>
+
+        <!-- YouTube Watch Along -->
+        <section class="watch-along-card" id="ytsec" ${isHost ? '' : 'hidden'}>
+          <div class="watch-along-header">
+            <div class="watch-along-title">
+              <span class="watch-along-icon">${ico('play-circle')}</span>
+              <strong>Watch Along</strong>
+            </div>
+            <span class="watch-along-status" id="ytst"></span>
+          </div>
+
+          <div class="yt" id="ytwrap" hidden>
+            <div id="ytp"></div>
+            ${isHost ? '' : '<div class="shield"></div>'}
+            <div class="ytnote" id="ytnote" hidden></div>
+          </div>
+
+          <div class="watch-along-bar" id="ytbar">
+            ${isHost
+              ? `<form class="watch-along-form" id="ytf">
+                  <div class="watch-along-input-wrap">
+                    <span class="watch-along-input-icon">${ico('link-2')}</span>
+                    <input type="url" id="yti" class="watch-along-input" aria-label="YouTube video URL" placeholder="Paste YouTube link to watch together…" required>
+                  </div>
+                  <button class="primary-button sm watch-along-submit" type="submit">Set video</button>
+                </form>
+                <button type="button" class="icon-button sm danger" id="ytrm" aria-label="Remove video" title="Remove video" hidden>${ico('trash-2')}</button>`
+              : `<div class="viewer-media-controls">
+                  <button type="button" class="icon-button sm" id="mute" aria-label="Toggle mute">${ico('volume-2')}</button>
+                  <label class="vol-label"><span class="sr-only">Volume</span><input type="range" id="vol" min="0" max="100" value="100" aria-label="Volume"></label>
+                </div>`}
           </div>
         </section>
-        <div class="shared-area"><div class="stream-head"><div><h2>Shared items<span class="count" id="ic" hidden></span></h2><p>Everything shared on this page appears here.</p></div><span class="stream-mark">${ico('sparkles')}</span></div><div id="feed"><div class="skel"></div></div></div>
-        <div class="tray" id="tray"></div>
-        ${isHost ? `<form class="composer" id="composer"><button type="button" class="icon-btn" id="attach" aria-label="Add files">${ico('paperclip')}</button><input type="file" id="fi" multiple hidden><div class="cin"><textarea id="ct" rows="1" maxlength="10000" placeholder="Write a note or paste a link…" aria-label="Text or link"></textarea></div><button class="btn dark" id="send" type="submit"><span>Share</span>${ico('arrow-up')}</button></form>` : ''}
-      </section>
-      <section class="block"><div class="block-h"><h2>Comments<span class="count" id="cc" hidden></span></h2><button class="btn sm" id="addc">${ico('plus')}Add a comment</button></div>
-        <form id="cform" hidden>${commentFields('c')}<div class="row" style="margin-top:12px"><button class="btn dark sm" type="submit">${ico('send')}Post</button></div></form>
-        <div id="comments"></div></section></div>
-      <aside class="col side"><section class="block share-card">
-        <div class="side-sec link-sec"><span class="label">Share this page</span><h2>Invite people</h2><div class="linkbox">${esc(shareUrl)}</div><button class="btn dark block" id="copy2">${ico('copy')}Copy link</button></div>
-        <div class="side-sec qr-sec"><div class="qr-title"><span class="label">${ico('qr-code')} QR code</span><button class="btn ghost sm" id="qrbig">Open</button></div><div class="qrpanel" id="qrbox"></div></div>
-        <div class="side-sec stats"><div><span class="label">Connected</span><strong id="users">1</strong></div><div><span class="label">Expires in</span><strong id="left">--</strong></div><div><span class="label">Shared</span><strong id="sc">0</strong></div></div>
-        ${isHost ? `<div class="side-sec host-sec"><span class="label">Page controls</span><button class="btn block" id="ext">${ico('clock')}Extend 1 hour</button><button class="btn danger block" id="del">${ico('trash-2')}Delete page</button><p class="note">Host access stays in this browser.</p></div>` : ''}
-      </section></aside></div>${isHost ? `<div class="dropov" id="dov" hidden><div>Drop files to share</div></div>` : ''}`, { meta, room: true });
 
-    $('#copy').onclick = $('#copy2').onclick = () => copyText(shareUrl);
-    $('#qrbig').onclick = qrModal; renderQR();
-    document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === b)); $('.workspace').dataset.tab = b.dataset.tab; });
+        <!-- Content Navigation Tabs -->
+        <nav class="content-tabs" aria-label="Shared content types" role="tablist">
+          <button type="button" class="content-tab is-active" data-filter="all" role="tab" aria-selected="true" aria-label="All items">
+            ${ico('layers')}
+            <span>All</span>
+            <span class="tab-badge" id="tabCountAll">0</span>
+          </button>
+          <button type="button" class="content-tab" data-filter="files" role="tab" aria-selected="false" aria-label="Files">
+            ${ico('file')}
+            <span>Files</span>
+            <span class="tab-badge" id="tabCountFiles">0</span>
+          </button>
+          <button type="button" class="content-tab" data-filter="links" role="tab" aria-selected="false" aria-label="Links">
+            ${ico('link-2')}
+            <span>Links</span>
+            <span class="tab-badge" id="tabCountLinks">0</span>
+          </button>
+          <button type="button" class="content-tab" data-filter="notes" role="tab" aria-selected="false" aria-label="Notes">
+            ${ico('file-text')}
+            <span>Notes</span>
+            <span class="tab-badge" id="tabCountNotes">0</span>
+          </button>
+          <button type="button" class="content-tab" data-filter="images" role="tab" aria-selected="false" aria-label="Images">
+            ${ico('image')}
+            <span>Images</span>
+            <span class="tab-badge" id="tabCountImages">0</span>
+          </button>
+        </nav>
+
+        <!-- Shared Items Stream Area -->
+        <div class="shared-area">
+          <span class="count" id="ic" hidden></span>
+          <div id="feed" class="shared-feed">
+            <div class="skel"></div>
+          </div>
+        </div>
+
+        <!-- Upload Progress Tray -->
+        <div class="tray" id="tray"></div>
+
+        <!-- Bottom-Pinned Share Composer -->
+        ${isHost ? `
+        <form class="share-composer" id="composer">
+          <button type="button" class="icon-button attachment-button" id="attach" aria-label="Attach file" title="Attach file">
+            ${ico('paperclip')}
+          </button>
+          <input type="file" id="fi" multiple hidden>
+          <div class="composer-input-wrap">
+            <textarea id="ct" class="composer-input" rows="1" maxlength="10000" placeholder="Write a note or paste a link… (Enter to share, Shift+Enter for new line)" aria-label="Write a note or paste a link"></textarea>
+          </div>
+          <button type="submit" class="primary-button composer-submit" id="send" aria-label="Share">
+            <span>Share</span>
+            ${ico('arrow-up')}
+          </button>
+        </form>` : `
+        <div class="viewer-notice">
+          <span class="viewer-notice-icon">${ico('info')}</span>
+          <span>You are viewing this shared workspace. You can read, preview, download files, and post comments below.</span>
+        </div>`}
+      </section>
+
+      <!-- Right Utility Sidebar -->
+      <aside class="sidebar" aria-label="Sharing and session details">
+        <!-- Panel 1: Share Link and Collapsible QR Code -->
+        <section class="sidebar-card share-link-card">
+          <div class="sidebar-card-header">
+            <div class="sidebar-card-title">
+              <span class="sidebar-icon">${ico('share-2')}</span>
+              <h2>Share page</h2>
+            </div>
+          </div>
+
+          <div class="share-url-box">
+            <span class="share-url-icon">${ico('link-2')}</span>
+            <span class="share-url-text" title="${esc(shareUrl)}">${esc(shareUrl)}</span>
+          </div>
+
+          <button type="button" class="primary-button copy-link-btn" id="copy2">
+            ${ico('copy')}
+            <span>Copy link</span>
+          </button>
+
+          <!-- Collapsible QR Code -->
+          <div class="qr-collapsible">
+            <button type="button" class="qr-toggle-btn" id="qrtoggle" aria-expanded="false" aria-controls="qrcollapse">
+              <span class="qr-toggle-left">${ico('qr-code')}<span>QR Code</span></span>
+              <span class="qr-toggle-chevron">${ico('chevron-down')}</span>
+            </button>
+            <div class="qr-collapse-content" id="qrcollapse" hidden>
+              <div class="qr-panel" id="qrbox"></div>
+              <div class="qr-actions">
+                <button type="button" class="secondary-button sm" id="qrbig">${ico('maximize-2')}<span>Expand QR</span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 2: Session Info & Controls -->
+        <section class="sidebar-card session-card">
+          <div class="sidebar-card-header">
+            <div class="sidebar-card-title">
+              <span class="sidebar-icon">${ico('activity')}</span>
+              <h2>Session</h2>
+            </div>
+          </div>
+
+          <div class="session-stats-grid">
+            <div class="session-stat-item">
+              <span class="session-stat-label">${ico('users')} Connected</span>
+              <strong class="session-stat-value" id="users">1</strong>
+            </div>
+            <div class="session-stat-item">
+              <span class="session-stat-label">${ico('clock')} Remaining</span>
+              <strong class="session-stat-value" id="left">--</strong>
+            </div>
+            <div class="session-stat-item">
+              <span class="session-stat-label">${ico('layers')} Shared</span>
+              <strong class="session-stat-value" id="sc">0</strong>
+            </div>
+          </div>
+
+          ${isHost ? `
+          <div class="host-actions">
+            <button type="button" class="secondary-button extend-session-btn" id="ext">
+              ${ico('clock-4')}
+              <span>Extend 1 hour</span>
+            </button>
+            <button type="button" class="danger-outline-button delete-page-btn" id="del">
+              ${ico('trash-2')}
+              <span>Delete page</span>
+            </button>
+            <p class="host-disclaimer">${ico('shield')} Host session is tied to this browser.</p>
+          </div>` : `
+          <p class="viewer-disclaimer">${ico('shield')} Content automatically expires when session timer reaches zero.</p>
+          `}
+        </section>
+
+        <!-- Panel 3: Comments -->
+        <section class="sidebar-card comments-card">
+          <div class="sidebar-card-header">
+            <div class="sidebar-card-title">
+              <span class="sidebar-icon">${ico('message-square')}</span>
+              <h2>Comments</h2>
+              <span class="count-badge" id="cc" hidden>0</span>
+            </div>
+            <button type="button" class="icon-button sm" id="addc" aria-label="Add comment" title="Add comment">
+              ${ico('plus')}
+            </button>
+          </div>
+
+          <form class="comment-composer-form" id="cform" hidden>
+            ${commentFields('c')}
+            <div class="form-actions">
+              <button type="button" class="secondary-button sm" id="cancelc">Cancel</button>
+              <button class="primary-button sm" type="submit">
+                ${ico('send')}
+                <span>Post</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="comments-scroll-area">
+            <div id="comments" class="comments-list"></div>
+          </div>
+        </section>
+      </aside>
+    </main>
+    ${isHost ? `<div class="dropov" id="dov" hidden><div>${ico('upload-cloud')}<span>Drop files to share</span></div></div>` : ''}`, { meta, room: true });
+
+    // Link copying
+    const c1 = $('#copy'), c2 = $('#copy2');
+    if (c1) c1.onclick = () => copyText(shareUrl);
+    if (c2) c2.onclick = () => copyText(shareUrl);
+
+    // QR code collapsible & modal
+    renderQR();
+    const qrToggle = $('#qrtoggle'), qrCol = $('#qrcollapse');
+    if (qrToggle && qrCol) {
+      qrToggle.onclick = () => {
+        const isExp = qrToggle.getAttribute('aria-expanded') === 'true';
+        qrToggle.setAttribute('aria-expanded', String(!isExp));
+        qrCol.hidden = isExp;
+        qrToggle.querySelector('.qr-toggle-chevron')?.classList.toggle('is-open', !isExp);
+      };
+    }
+    const qrBig = $('#qrbig');
+    if (qrBig) qrBig.onclick = qrModal;
+
+    // Content navigation tabs
+    document.querySelectorAll('.content-tab').forEach((b) => {
+      b.onclick = () => {
+        document.querySelectorAll('.content-tab').forEach((x) => {
+          const on = x === b;
+          x.classList.toggle('is-active', on);
+          x.setAttribute('aria-selected', String(on));
+        });
+        currentTab = b.dataset.filter || 'all';
+        renderFeed();
+      };
+    });
+
     if (isHost) {
       $('#ext').onclick = extend;
       $('#del').onclick = async () => {
@@ -132,12 +367,22 @@ export function openPage(id) {
       document.addEventListener('dragover', onOver); document.addEventListener('drop', onDrop);
       cleanups.push(() => { document.removeEventListener('dragover', onOver); document.removeEventListener('drop', onDrop); clearTimeout(dt); });
     } else {
-      $('#mute').onclick = () => { const p = Y.player; if (!p || !Y.ready) return; const m = p.isMuted(); m ? p.unMute() : p.mute(); $('#mute').innerHTML = ico(m ? 'volume-2' : 'volume-x'); paint(); };
-      $('#vol').oninput = (e) => Y.ready && Y.player.setVolume(Number(e.target.value));
+      const mute = $('#mute'), vol = $('#vol');
+      if (mute) mute.onclick = () => { const p = Y.player; if (!p || !Y.ready) return; const m = p.isMuted(); m ? p.unMute() : p.mute(); mute.innerHTML = ico(m ? 'volume-2' : 'volume-x'); paint(); };
+      if (vol) vol.oninput = (e) => Y.ready && Y.player.setVolume(Number(e.target.value));
     }
-    $('#addc').onclick = () => { const f = $('#cform'); f.hidden = !f.hidden; if (!f.hidden) $('#cform textarea').focus(); };
+
+    $('#addc').onclick = () => {
+      const f = $('#cform');
+      f.hidden = !f.hidden;
+      if (!f.hidden) $('#cform textarea')?.focus();
+    };
+    const cancelC = $('#cancelc');
+    if (cancelC) cancelC.onclick = () => { $('#cform').hidden = true; };
+
     $('#cform').onsubmit = (e) => { e.preventDefault(); sendComment(e.target, null); };
-    $('#feed').onclick = feedClick; $('#comments').onclick = commentClick;
+    $('#feed').onclick = feedClick;
+    $('#comments').onclick = commentClick;
     $('#comments').addEventListener('submit', (e) => { e.preventDefault(); sendComment(e.target, e.target.dataset.parent); });
     $('#comments').addEventListener('input', (e) => { if (e.target.matches('.rf textarea')) replyDraft = e.target.value; });
 
@@ -160,8 +405,6 @@ export function openPage(id) {
     const t = fmtLeft(left); const a = $('#left'), h = $('#hleft'); if (a) a.textContent = t; if (h) h.textContent = t;
   }
 
-  // Firestore does not offer an onDisconnect hook, so presence is a short-lived heartbeat.
-  // A closed or offline tab naturally disappears within one minute.
   function setupPresence() {
     const session = crypto.randomUUID(), here = doc(pref, 'presence', session), ttl = 55_000;
     const beat = () => setDoc(here, {
@@ -185,7 +428,7 @@ export function openPage(id) {
   async function extend() {
     const cur = page.expiresAt.toMillis(), next = Math.min(cur + 3600e3, Date.now() + 7 * 864e5);
     if (next <= cur + 1000) return toast('This page is at the 7 day maximum.', true);
-    try { await updateDoc(pref, { expiresAt: Timestamp.fromMillis(next) }); toast('Page extended'); } catch { toast('Could not extend the page.', true); }
+    try { await updateDoc(pref, { expiresAt: Timestamp.fromMillis(next) }); toast('Page extended 1 hour'); } catch { toast('Could not extend the page.', true); }
   }
 
   let qrUrl = '';
@@ -196,7 +439,7 @@ export function openPage(id) {
   function qrModal() {
     try {
       const big = qrPng(shareUrl, 14, 2);
-      const m = modal(`<h2>Scan to open</h2><p class="mut">Opens this page on any phone.</p><div class="qrbig"><img src="${big}" alt="QR code for this page"></div><div class="row end"><a class="btn" download="openframe-qr.png" href="${big}">${ico('download')}Download</a><button class="btn dark" data-x>Done</button></div>`);
+      const m = modal(`<h2>Scan to open</h2><p class="mut">Opens this page on any device.</p><div class="qrbig"><img src="${big}" alt="QR code for this page"></div><div class="row end"><a class="secondary-button sm" download="openframe-qr.png" href="${big}">${ico('download')}<span>Download</span></a><button class="primary-button sm" data-x>Done</button></div>`);
       m.el.querySelector('[data-x]').onclick = m.close;
     } catch { toast('Could not generate the QR code.', true); }
   }
@@ -215,27 +458,105 @@ export function openPage(id) {
   };
 
   function itemHtml(it) {
-    const acts = isHost ? `<span>${it.type === 'text' ? `<button class="btn ghost sm" data-a="edit" aria-label="Edit text">${ico('pencil')}</button>` : ''}<button class="btn ghost sm" data-a="del" aria-label="Delete entry">${ico('trash-2')}</button></span>` : '';
+    const acts = isHost
+      ? `<div class="item-actions">
+          ${it.type === 'text' ? `<button type="button" class="icon-button xs" data-a="edit" aria-label="Edit text" title="Edit text">${ico('pencil')}</button>` : ''}
+          <button type="button" class="icon-button xs danger" data-a="del" aria-label="Delete entry" title="Delete entry">${ico('trash-2')}</button>
+        </div>`
+      : '';
+
     let body = '';
-    if (it.type === 'text') body = `<div class="txt">${esc(it.text)}</div>`;
-    else if (it.type === 'link') body = `<a class="u" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">${esc(it.url)}</a>`;
-    else {
-      const card = `<div class="file"><div class="n">${esc(it.originalName)}<small>${esc(it.contentType)} · ${fmtSize(it.size)}</small></div><span class="row"><button class="btn sm" data-a="dl">${ico('download')}Download</button></span></div>`;
-      if (it.type === 'image' && (it.size <= AUTO_PREVIEW || urls.has(it.id))) body = `${card}<img alt="${esc(it.originalName)}" data-img="${it.id}" ${urls.has(it.id) ? `src="${urls.get(it.id)}"` : ''}>`;
-      else if (it.type === 'video' && urls.has(it.id)) body = `${card}<video controls preload="metadata" src="${urls.get(it.id)}"></video>`;
-      else if (it.type === 'image' || it.type === 'video') body = card.replace('<span class="row">', `<span class="row"><button class="btn sm" data-a="load">${ico('play')}Preview</button>`);
-      else body = card;
+    if (it.type === 'text') {
+      body = `<div class="txt">${esc(it.text)}</div>`;
+    } else if (it.type === 'link') {
+      body = `<a class="u" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">${ico('external-link')}<span>${esc(it.url)}</span></a>`;
+    } else {
+      const isImg = it.type === 'image', isVid = it.type === 'video';
+      const hasBlob = urls.has(it.id);
+      const canAuto = isImg && it.size <= AUTO_PREVIEW;
+
+      let mediaPreview = '';
+      if (isImg && (canAuto || hasBlob)) {
+        mediaPreview = `<div class="media-preview-wrap"><img alt="${esc(it.originalName)}" data-img="${it.id}" ${hasBlob ? `src="${urls.get(it.id)}"` : ''}></div>`;
+      } else if (isVid && hasBlob) {
+        mediaPreview = `<div class="media-preview-wrap"><video controls preload="metadata" src="${urls.get(it.id)}"></video></div>`;
+      }
+
+      const needsLoad = (isImg || isVid) && !canAuto && !hasBlob;
+      const previewBtn = needsLoad ? `<button type="button" class="secondary-button sm" data-a="load">${ico('play')}<span>Preview</span></button>` : '';
+
+      body = `<div class="file">
+        <div class="file-info">
+          <span class="file-name">${esc(it.originalName)}</span>
+          <small class="file-meta">${esc(it.contentType)} · ${fmtSize(it.size)}</small>
+        </div>
+        <div class="file-actions">
+          ${previewBtn}
+          <button type="button" class="secondary-button sm" data-a="dl">${ico('download')}<span>Download</span></button>
+        </div>
+      </div>${mediaPreview}`;
     }
-    return `<article class="item" data-id="${it.id}"><div class="meta"><span>${fmtTime(it.createdAt)}</span>${acts}</div>${body}</article>`;
+
+    const badgeIcon = it.type === 'image' ? 'image' : it.type === 'video' ? 'video' : it.type === 'link' ? 'link-2' : it.type === 'text' ? 'file-text' : 'file';
+    const badgeLabel = it.type === 'image' ? 'Image' : it.type === 'video' ? 'Video' : it.type === 'link' ? 'Link' : it.type === 'text' ? 'Note' : 'File';
+
+    return `<article class="item" data-id="${it.id}">
+      <div class="item-header">
+        <span class="item-type-badge">${ico(badgeIcon)}<span>${badgeLabel}</span></span>
+        <span class="item-time">${fmtTime(it.createdAt)}</span>
+        ${acts}
+      </div>
+      <div class="item-body">${body}</div>
+    </article>`;
+  }
+
+  function emptyStateHtml(filter) {
+    const icon = filter === 'files' ? 'file' : filter === 'links' ? 'link-2' : filter === 'notes' ? 'file-text' : filter === 'images' ? 'image' : 'sparkles';
+    const title = filter === 'files' ? 'No files shared yet'
+      : filter === 'links' ? 'No links shared yet'
+      : filter === 'notes' ? 'No notes shared yet'
+      : filter === 'images' ? 'No images shared yet'
+      : 'Nothing shared yet';
+    const desc = isHost
+      ? (filter === 'files' || filter === 'images' ? 'Use the paperclip button in the composer to attach files.' : 'Add a file, link or note below to get started.')
+      : 'Items shared by the host will appear here in real time.';
+    return `<div class="empty-state">
+      <div class="empty-state-icon">${ico(icon)}</div>
+      <h2>${title}</h2>
+      <p>${desc}</p>
+    </div>`;
   }
 
   function renderFeed() {
     const feed = $('#feed'); if (!feed) return;
-    const ic = $('#ic'); ic.hidden = !items.length; ic.textContent = items.length; $('#sc').textContent = items.length;
-    feed.innerHTML = items.length ? items.map(itemHtml).join('') : `<p class="empty">${isHost ? 'Nothing here yet. Add text, a link or a file.' : 'Nothing shared yet.'}</p>`;
+    const ic = $('#ic'); if (ic) { ic.hidden = !items.length; ic.textContent = items.length; }
+    const sc = $('#sc'); if (sc) sc.textContent = items.length;
+
+    // Update tab counters
+    const countAll = items.length;
+    const countFiles = items.filter((x) => x.type === 'file' || x.type === 'video').length;
+    const countLinks = items.filter((x) => x.type === 'link').length;
+    const countNotes = items.filter((x) => x.type === 'text').length;
+    const countImages = items.filter((x) => x.type === 'image').length;
+
+    const bAll = $('#tabCountAll'), bFiles = $('#tabCountFiles'), bLinks = $('#tabCountLinks'), bNotes = $('#tabCountNotes'), bImages = $('#tabCountImages');
+    if (bAll) bAll.textContent = countAll;
+    if (bFiles) bFiles.textContent = countFiles;
+    if (bLinks) bLinks.textContent = countLinks;
+    if (bNotes) bNotes.textContent = countNotes;
+    if (bImages) bImages.textContent = countImages;
+
+    let filtered = items;
+    if (currentTab === 'files') filtered = items.filter((x) => x.type === 'file' || x.type === 'video');
+    else if (currentTab === 'links') filtered = items.filter((x) => x.type === 'link');
+    else if (currentTab === 'notes') filtered = items.filter((x) => x.type === 'text');
+    else if (currentTab === 'images') filtered = items.filter((x) => x.type === 'image');
+
+    feed.innerHTML = filtered.length ? filtered.map(itemHtml).join('') : emptyStateHtml(currentTab);
     paint();
     feed.querySelectorAll('img[data-img]:not([src])').forEach(async (img) => {
       const it = items.find((x) => x.id === img.dataset.img);
+      if (!it) return;
       try { const u = await blobFor(it); const t = $(`img[data-img="${it.id}"]`); if (t && !dead) t.src = u; } catch { toast('An image could not be loaded.', true); }
     });
   }
@@ -264,7 +585,7 @@ export function openPage(id) {
       try { if (it.storagePath) await deleteObject(sref(storage, it.storagePath)).catch((er) => { if (er.code !== 'storage/object-not-found') throw er; }); if (it.isChunked) await deleteChunkedFile(it.fileURL, pref); await deleteDoc(doc(pref, 'items', it.id)); toast('Entry deleted'); }
       catch { toast('Could not delete the entry.', true); }
     } else if (a === 'edit') {
-      const m = modal(`<h2>Edit text</h2><label class="f" for="et" style="margin-top:0">Text</label><textarea id="et" maxlength="10000"></textarea><p class="err" hidden></p><div class="row end"><button class="btn" data-x>Cancel</button><button class="btn primary" data-s>Save</button></div>`);
+      const m = modal(`<h2>Edit text</h2><label class="f" for="et" style="margin-top:0">Text</label><textarea id="et" maxlength="10000"></textarea><p class="err" hidden></p><div class="row end"><button class="secondary-button sm" data-x>Cancel</button><button class="primary-button sm" data-s>Save</button></div>`);
       const ta = m.el.querySelector('textarea'); ta.value = it.text; m.el.querySelector('[data-x]').onclick = m.close;
       m.el.querySelector('[data-s]').onclick = async (ev) => {
         const t = ta.value.trim(); if (!t) { const er = m.el.querySelector('.err'); er.hidden = false; er.textContent = 'Text cannot be empty.'; return; }
@@ -285,9 +606,10 @@ export function openPage(id) {
     if (f.size > MAX_FILE) return toast(`${f.name} is over the 25 MB limit.`, true);
     if (BLOCKED.test(f.name)) return toast(`${f.name} is a file type that cannot be shared.`, true);
     const ct = f.type || 'application/octet-stream', path = `pages/${id}/${crypto.randomUUID()}`;
-    const row = document.createElement('div'); row.className = 'up'; row.innerHTML = `<div class="up-top"><span></span><button type="button" class="btn ghost sm">Cancel</button></div><div class="prog"><i></i></div>`;
+    const row = document.createElement('div'); row.className = 'up'; row.innerHTML = `<div class="up-top"><span></span><button type="button" class="icon-button xs danger" title="Cancel upload">${ico('x')}</button></div><div class="prog"><i></i></div>`;
     row.querySelector('span').textContent = `Uploading ${f.name} (${fmtSize(f.size)})`;
     row.querySelector('button').onclick = () => controller.abort(); $('#tray')?.append(row);
+    paint();
     try {
       const stored = await uploadFileWithFallback({ file: f, parentRef: pref, storagePath: path, contentType: ct, signal: controller.signal, onProgress: (percent) => { row.querySelector('i').style.width = percent + '%'; } });
       const type = IMG.test(ct) ? 'image' : VID.test(ct) ? 'video' : 'file';
@@ -303,8 +625,8 @@ export function openPage(id) {
   /* ---------- comments ---------- */
   function commentFields(p) {
     const n = sessionStorage.getItem('of-name') || '';
-    return `<label class="f" for="${p}n" style="margin-top:0">Display name</label><input id="${p}n" name="n" type="text" maxlength="40" value="${esc(n)}" autocomplete="nickname" required>
-      <label class="f" for="${p}b">Comment</label><textarea id="${p}b" name="b" maxlength="1000" required style="min-height:70px"></textarea><p class="err" hidden></p>`;
+    return `<label class="f" for="${p}n" style="margin-top:0">Display name</label><input id="${p}n" name="n" type="text" maxlength="40" value="${esc(n)}" autocomplete="nickname" placeholder="Your name" required>
+      <label class="f" for="${p}b">Comment</label><textarea id="${p}b" name="b" maxlength="1000" placeholder="Type a comment…" required style="min-height:70px"></textarea><p class="err" hidden></p>`;
   }
 
   async function sendComment(form, parent) {
@@ -325,10 +647,10 @@ export function openPage(id) {
 
   function renderComments() {
     const box = $('#comments'); if (!box) return;
-    const cc = $('#cc'); cc.hidden = !comments.length; cc.textContent = comments.length;
+    const cc = $('#cc'); if (cc) { cc.hidden = !comments.length; cc.textContent = comments.length; }
     const top = comments.filter((c) => !c.parentCommentId), kids = (c) => comments.filter((r) => r.parentCommentId === c.id);
-    const head = (c, reply) => `<div class="cm"><b>${esc(c.displayName)}</b><span>${fmtTime(c.createdAt)}</span><span class="g">${reply ? '' : `<button class="btn ghost sm" data-a="reply" aria-label="Reply">${ico('reply')}Reply</button>`}${isHost || c.anonymousAuthorId === uid ? `<button class="btn ghost sm" data-a="delc" aria-label="Delete comment">${ico('trash-2')}</button>` : ''}</span></div><p>${esc(c.body)}</p>`;
-    box.innerHTML = top.length ? top.map((c) => `<div class="c" data-cid="${c.id}">${head(c, false)}${kids(c).map((r) => `<div class="re" data-cid="${r.id}">${head(r, true)}</div>`).join('')}<div class="rf" ${openReply === c.id ? '' : 'hidden'}></div></div>`).join('') : `<p class="empty">No comments yet.</p>`;
+    const head = (c, reply) => `<div class="cm"><div class="cm-author"><b>${esc(c.displayName)}</b><span class="cm-time">${fmtTime(c.createdAt)}</span></div><div class="cm-actions">${reply ? '' : `<button type="button" class="icon-button xs" data-a="reply" aria-label="Reply to comment" title="Reply">${ico('reply')}</button>`}${isHost || c.anonymousAuthorId === uid ? `<button type="button" class="icon-button xs danger" data-a="delc" aria-label="Delete comment" title="Delete comment">${ico('trash-2')}</button>` : ''}</div></div><p class="cm-body">${esc(c.body)}</p>`;
+    box.innerHTML = top.length ? top.map((c) => `<div class="c" data-cid="${c.id}">${head(c, false)}${kids(c).map((r) => `<div class="re" data-cid="${r.id}">${head(r, true)}</div>`).join('')}<div class="rf" ${openReply === c.id ? '' : 'hidden'}></div></div>`).join('') : `<div class="empty-comments"><p class="mut">No comments yet. Start the conversation!</p></div>`;
     if (openReply) mountReply(openReply);
     paint();
   }
@@ -336,7 +658,7 @@ export function openPage(id) {
   function mountReply(cid) {
     const slot = $(`.c[data-cid="${cid}"] .rf`, $('#comments')); if (!slot) { openReply = null; return; }
     slot.hidden = false;
-    slot.innerHTML = `<form data-parent="${cid}">${commentFields('r' + cid)}<div class="row" style="margin-top:10px"><button class="btn primary sm" type="submit">${ico('send')}Reply</button><button class="btn sm" type="button" data-a="cancel">Cancel</button></div></form>`;
+    slot.innerHTML = `<form class="reply-form" data-parent="${cid}">${commentFields('r' + cid)}<div class="form-actions"><button class="secondary-button sm" type="button" data-a="cancel">Cancel</button><button class="primary-button sm" type="submit">${ico('send')}<span>Reply</span></button></div></form>`;
     const ta = slot.querySelector('textarea'); ta.value = replyDraft; paint();
   }
 
@@ -373,7 +695,7 @@ export function openPage(id) {
   const expected = () => { const c = Y.cur; return c.positionSeconds + (c.isPlaying ? Math.max(0, (Date.now() - c.at) / 1000) : 0); };
   const quiet = () => { Y.applying = true; setTimeout(() => { Y.applying = false; }, 900); };
   function note(html) { const n = $('#ytnote'); if (!n) return; n.hidden = !html; n.innerHTML = html || ''; paint(); const j = n.querySelector('#join'); if (j) j.onclick = () => { quiet(); Y.player.seekTo(expected(), true); Y.cur.isPlaying ? Y.player.playVideo() : Y.player.pauseVideo(); note(''); }; }
-  const joinNote = () => note(`<button class="btn primary" id="join">${ico('play')}Join playback</button>`);
+  const joinNote = () => note(`<button type="button" class="primary-button sm" id="join">${ico('play')}<span>Join playback</span></button>`);
 
   async function ytSync(s) {
     const sec = $('#ytsec'), wrap = $('#ytwrap'); if (!sec) return;
